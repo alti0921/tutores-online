@@ -110,6 +110,131 @@ const SEED_STUDENT_TRANSACTIONS = [
     { id: 'TX-seed-2', type: 'booking', description: 'Pago Tutoría Física (Ana Rodríguez)', amount: -20.00, timestamp: '2026-05-22, 10:00', status: 'Completado' }
 ];
 
+// ================= PERSISTENCIA LOCAL STORAGE =================
+function saveUsers() { localStorage.setItem('tutores_online_users', JSON.stringify(state.users)); }
+function saveTutors() { localStorage.setItem('tutores_online_tutors', JSON.stringify(state.tutors)); }
+
+// Base de Datos de Reservas Global
+function loadGlobalBookings() {
+    const stored = localStorage.getItem('tutores_online_global_bookings');
+    if (stored) {
+        return JSON.parse(stored);
+    } else {
+        const seedGlobal = [...SEED_STUDENT_BOOKINGS].map(b => ({
+            ...b,
+            studentUsername: 'estudiante',
+            studentName: 'Sofía Montenegro'
+        }));
+        localStorage.setItem('tutores_online_global_bookings', JSON.stringify(seedGlobal));
+        return seedGlobal;
+    }
+}
+
+function saveGlobalBookings(bookings) {
+    localStorage.setItem('tutores_online_global_bookings', JSON.stringify(bookings));
+}
+
+// Persistencia Independiente por Estudiante
+function loadStudentBalance() {
+    if (state.role === 'student' && state.username) {
+        const key = `tutores_online_balance_${state.username}`;
+        const stored = localStorage.getItem(key);
+        if (stored) {
+            state.studentBalance = parseFloat(stored);
+        } else {
+            state.studentBalance = 100.00;
+            saveStudentBalance();
+        }
+    } else {
+        state.studentBalance = 100.00;
+    }
+}
+
+function saveStudentBalance() {
+    if (state.role === 'student' && state.username) {
+        const key = `tutores_online_balance_${state.username}`;
+        localStorage.setItem(key, state.studentBalance.toString());
+    }
+}
+
+function loadStudentBookings() {
+    if (state.role === 'student' && state.username) {
+        const key = `tutores_online_bookings_${state.username}`;
+        const stored = localStorage.getItem(key);
+        if (stored) {
+            state.studentBookings = JSON.parse(stored);
+        } else {
+            if (state.username === 'estudiante') {
+                state.studentBookings = [...SEED_STUDENT_BOOKINGS];
+            } else {
+                state.studentBookings = [];
+            }
+            saveStudentBookings();
+        }
+    } else {
+        state.studentBookings = [];
+    }
+}
+
+function saveStudentBookings() {
+    if (state.role === 'student' && state.username) {
+        const studentKey = `tutores_online_bookings_${state.username}`;
+        localStorage.setItem(studentKey, JSON.stringify(state.studentBookings));
+        
+        // Sincronizar con la base de datos de reservas global
+        let globalBookings = loadGlobalBookings();
+        state.studentBookings.forEach(studentBooking => {
+            const idx = globalBookings.findIndex(gb => gb.id === studentBooking.id);
+            if (idx !== -1) {
+                globalBookings[idx] = { ...globalBookings[idx], ...studentBooking };
+            } else {
+                globalBookings.push(studentBooking);
+            }
+        });
+        saveGlobalBookings(globalBookings);
+    }
+}
+
+function loadStudentTransactions() {
+    if (state.role === 'student' && state.username) {
+        const key = `tutores_online_transactions_${state.username}`;
+        const stored = localStorage.getItem(key);
+        if (stored) {
+            state.studentTransactions = JSON.parse(stored);
+        } else {
+            if (state.username === 'estudiante') {
+                state.studentTransactions = [...SEED_STUDENT_TRANSACTIONS];
+            } else {
+                state.studentTransactions = [];
+            }
+            saveStudentTransactions();
+        }
+    } else {
+        state.studentTransactions = [];
+    }
+}
+
+function saveStudentTransactions() {
+    if (state.role === 'student' && state.username) {
+        const key = `tutores_online_transactions_${state.username}`;
+        localStorage.setItem(key, JSON.stringify(state.studentTransactions));
+    }
+}
+
+function syncBookingsFromGlobal() {
+    if (state.role === 'student' && state.username) {
+        const globalBookings = loadGlobalBookings();
+        const studentGlobalBookings = globalBookings.filter(b => b.studentUsername === state.username);
+        
+        state.studentBookings = studentGlobalBookings;
+        const studentKey = `tutores_online_bookings_${state.username}`;
+        localStorage.setItem(studentKey, JSON.stringify(state.studentBookings));
+    }
+}
+
+function savePlatformProfitability() { localStorage.setItem('tutores_online_platform_profitability', state.platformProfitability.toString()); }
+function savePlatformCommissions() { localStorage.setItem('tutores_online_platform_commissions', state.platformCommissions.toString()); }
+
 // ================= INICIALIZACIÓN DE DATOS Y ESTADOS =================
 function initApp() {
     // Cargar credenciales y registros
@@ -130,32 +255,8 @@ function initApp() {
         saveTutors();
     }
 
-    // Cargar saldo de estudiante
-    const storedBalance = localStorage.getItem('tutores_online_student_balance');
-    if (storedBalance) {
-        state.studentBalance = parseFloat(storedBalance);
-    } else {
-        state.studentBalance = 100.00;
-        saveStudentBalance();
-    }
-
-    // Cargar reservas
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    } else {
-        state.studentBookings = [...SEED_STUDENT_BOOKINGS];
-        saveStudentBookings();
-    }
-
-    // Cargar transacciones
-    const storedTransactions = localStorage.getItem('tutores_online_student_transactions');
-    if (storedTransactions) {
-        state.studentTransactions = JSON.parse(storedTransactions);
-    } else {
-        state.studentTransactions = [...SEED_STUDENT_TRANSACTIONS];
-        saveStudentTransactions();
-    }
+    // Inicializar base de datos de reservas global
+    loadGlobalBookings();
 
     // Cargar ganancias generales plataforma
     const storedProfit = localStorage.getItem('tutores_online_platform_profitability');
@@ -175,6 +276,24 @@ function initApp() {
         savePlatformCommissions();
     }
 
+    // Recuperar sesión para cargar datos de usuario aislados
+    const sessionRole = sessionStorage.getItem('tutores_online_role');
+    const sessionUser = sessionStorage.getItem('tutores_online_username');
+    const sessionTutorId = sessionStorage.getItem('tutores_online_tutorId');
+    if (sessionRole && sessionUser) {
+        state.role = sessionRole;
+        state.username = sessionUser;
+        state.tutorId = sessionTutorId;
+    }
+
+    // Cargar saldo, reservas y transacciones del estudiante (user-specific si está logueado)
+    loadStudentBalance();
+    loadStudentBookings();
+    loadStudentTransactions();
+    if (state.role === 'student') {
+        syncBookingsFromGlobal();
+    }
+
     // Setup de Reloj y Listeners
     startClock();
     setupEventListeners();
@@ -186,15 +305,6 @@ function initApp() {
     // Validar Sesión
     checkUserSession();
 }
-
-// ================= PERSISTENCIA LOCAL STORAGE =================
-function saveUsers() { localStorage.setItem('tutores_online_users', JSON.stringify(state.users)); }
-function saveTutors() { localStorage.setItem('tutores_online_tutors', JSON.stringify(state.tutors)); }
-function saveStudentBalance() { localStorage.setItem('tutores_online_student_balance', state.studentBalance.toString()); }
-function saveStudentBookings() { localStorage.setItem('tutores_online_student_bookings', JSON.stringify(state.studentBookings)); }
-function saveStudentTransactions() { localStorage.setItem('tutores_online_student_transactions', JSON.stringify(state.studentTransactions)); }
-function savePlatformProfitability() { localStorage.setItem('tutores_online_platform_profitability', state.platformProfitability.toString()); }
-function savePlatformCommissions() { localStorage.setItem('tutores_online_platform_commissions', state.platformCommissions.toString()); }
 
 // ================= TOASTS DE NOTIFICACIÓN =================
 function showToast(message, type = 'success') {
@@ -302,11 +412,8 @@ function checkNotificationsSimulation() {
         return;
     }
     
-    // Recargar bookings
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    }
+    // Recargar bookings de forma aislada y sincronizar desde global
+    syncBookingsFromGlobal();
     
     const acceptedBookings = state.studentBookings.filter(b => b.status === 'accepted');
     
@@ -376,6 +483,10 @@ function checkUserSession() {
             roleBadge.textContent = "Estudiante";
             roleBadge.className = "text-[10px] text-blue-400 font-bold tracking-widest uppercase";
             studentNav.classList.remove('hidden');
+            loadStudentBalance();
+            loadStudentBookings();
+            loadStudentTransactions();
+            syncBookingsFromGlobal();
             switchTab('student-dashboard');
         } else if (state.role === 'tutor') {
             roleBadge.textContent = "Tutor / Profesor";
@@ -463,6 +574,16 @@ function handleLogout() {
         sessionStorage.removeItem('tutores_online_role');
         sessionStorage.removeItem('tutores_online_username');
         sessionStorage.removeItem('tutores_online_tutorId');
+        sessionStorage.removeItem('tutores_online_notified_bookings');
+
+        // Reset state properties
+        state.role = null;
+        state.username = null;
+        state.tutorId = null;
+        state.studentBalance = 100.00;
+        state.studentBookings = [];
+        state.studentTransactions = [];
+
         showToast("Sesión cerrada correctamente.", "info");
         checkUserSession();
     }
@@ -669,14 +790,8 @@ function renderStudentDashboard() {
     if (storedUsers) {
         state.users = JSON.parse(storedUsers);
     }
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    }
-    const storedBalance = localStorage.getItem('tutores_online_student_balance');
-    if (storedBalance) {
-        state.studentBalance = parseFloat(storedBalance);
-    }
+    syncBookingsFromGlobal();
+    loadStudentBalance();
 
     const studentWelcome = document.getElementById('student-welcome-container');
     if (studentWelcome) {
@@ -1055,8 +1170,13 @@ function handleBookingSubmit(type) {
     const videoLink = `https://meet.google.com/${meetId}`;
     const location = `Edificio de Ingeniería - Aula ${Math.floor(Math.random() * 8) + 101}`;
 
+    const currentUser = state.users.find(u => u.username === state.username);
+    const studentName = currentUser ? currentUser.name : state.username;
+
     const newBooking = {
         id: 'BKG-' + Date.now(),
+        studentUsername: state.username,
+        studentName: studentName,
         tutorId: tutor.id,
         tutorName: tutor.name,
         subject: tutor.subject,
@@ -1081,15 +1201,8 @@ function handleBookingSubmit(type) {
 
 // ================= LÓGICA ESTUDIANTE: MI CAJA =================
 function renderMiCaja() {
-    // Cargar dinámicamente desde LocalStorage para sincronización total
-    const storedTransactions = localStorage.getItem('tutores_online_student_transactions');
-    if (storedTransactions) {
-        state.studentTransactions = JSON.parse(storedTransactions);
-    }
-    const storedBalance = localStorage.getItem('tutores_online_student_balance');
-    if (storedBalance) {
-        state.studentBalance = parseFloat(storedBalance);
-    }
+    loadStudentTransactions();
+    loadStudentBalance();
 
     const tbody = document.getElementById('student-history-tbody');
     const emptyEl = document.getElementById('student-history-empty');
@@ -1173,11 +1286,8 @@ function handleCouponSubmit(e) {
 
 // ================= LÓGICA ESTUDIANTE: EVALUAR SESIONES (PROCESO 5.0) =================
 function renderEvaluarSesiones() {
-    // Cargar dinámicamente desde LocalStorage para sincronización total
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    }
+    // Cargar dinámicamente desde LocalStorage de forma aislada y sincronizar
+    syncBookingsFromGlobal();
 
     const listEl = document.getElementById('eval-sessions-list');
     const emptyEl = document.getElementById('eval-sessions-empty');
@@ -1239,10 +1349,7 @@ function handleEvaluationSubmit(e) {
     if (storedTutors) {
         state.tutors = JSON.parse(storedTutors);
     }
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    }
+    syncBookingsFromGlobal();
     const bookingId = document.getElementById('eval-booking-id').value;
     const comment = document.getElementById('eval-comment').value.trim();
     const starsRadio = document.querySelector('input[name="stars"]:checked');
@@ -1304,23 +1411,16 @@ window.handleReportDispute = function() {
         return;
     }
 
-    // Recargar datos desde LocalStorage para sincronización total
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    }
+    // Recargar datos desde LocalStorage de forma aislada y sincronizada
+    syncBookingsFromGlobal();
+    
     const storedTutors = localStorage.getItem('tutores_online_tutors');
     if (storedTutors) {
         state.tutors = JSON.parse(storedTutors);
     }
-    const storedBalance = localStorage.getItem('tutores_online_student_balance');
-    if (storedBalance) {
-        state.studentBalance = parseFloat(storedBalance);
-    }
-    const storedTransactions = localStorage.getItem('tutores_online_student_transactions');
-    if (storedTransactions) {
-        state.studentTransactions = JSON.parse(storedTransactions);
-    }
+    loadStudentBalance();
+    loadStudentTransactions();
+    
     const storedProfit = localStorage.getItem('tutores_online_platform_profitability');
     if (storedProfit) {
         state.platformProfitability = parseFloat(storedProfit);
@@ -1449,14 +1549,11 @@ function renderSolicitudesClases() {
     scheduledListEl.innerHTML = '';
     uberListEl.innerHTML = '';
 
-    // Cargar dinámicamente desde LocalStorage para sincronización total
-    const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-    if (storedBookings) {
-        state.studentBookings = JSON.parse(storedBookings);
-    }
+    // Cargar dinámicamente desde LocalStorage global para sincronización total
+    const globalBookings = loadGlobalBookings();
 
     // Filtrar solicitudes pendientes del tutor activo por ID, nombre de usuario o nombre completo
-    const tutorBookings = state.studentBookings.filter(b => 
+    const tutorBookings = globalBookings.filter(b => 
         (b.tutorId === tutor.id || b.tutorId === state.username || b.tutorName === tutor.name) && 
         b.status === 'pending'
     );
@@ -1479,11 +1576,13 @@ function renderSolicitudesClases() {
         scheduledBookings.forEach(booking => {
             const item = document.createElement('div');
             item.className = 'bg-slate-950/50 border border-slate-850 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3';
+            
+            const studentName = booking.studentName || 'Estudiante Regular';
             item.innerHTML = `
                 <div>
                     <div class="flex items-center gap-2">
                         <span class="text-xs font-bold text-slate-350">Alumno:</span>
-                        <span class="text-xs font-black text-white">Estudiante Regular</span>
+                        <span class="text-xs font-black text-white">${studentName}</span>
                     </div>
                     <div class="flex flex-wrap items-center gap-3.5 mt-1.5 text-[10px] text-slate-450 font-semibold">
                         <span class="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">Fecha: ${booking.date}</span>
@@ -1512,13 +1611,15 @@ function renderSolicitudesClases() {
         uberBookings.forEach(booking => {
             const item = document.createElement('div');
             item.className = 'bg-purple-950/5 border border-purple-900/20 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm';
+            
+            const studentName = booking.studentName || 'Estudiante';
             item.innerHTML = `
                 <div>
                     <div class="flex items-center gap-2">
                         <span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse glow-purple"></span>
-                        <span class="text-xs font-bold text-slate-300">¡Ayuda Emergencia de Estudiante!</span>
+                        <span class="text-xs font-bold text-slate-350">¡Ayuda Emergencia de ${studentName}!</span>
                     </div>
-                    <div class="flex flex-wrap items-center gap-3.5 mt-1.5 text-[10px] text-slate-400 font-semibold">
+                    <div class="flex flex-wrap items-center gap-3.5 mt-1.5 text-[10px] text-slate-450 font-semibold">
                         <span class="bg-slate-950 border border-slate-850 px-2 py-0.5 rounded">Clase Inmediata</span>
                         <span class="bg-slate-950 border border-slate-850 px-2 py-0.5 rounded text-emerald-400 font-bold">$${booking.price.toFixed(2)}/hr</span>
                     </div>
@@ -1564,10 +1665,11 @@ function updateAvailabilityLabel(online) {
 }
 
 window.respondToRequest = function(bookingId, action) {
-    const bookingIndex = state.studentBookings.findIndex(b => b.id === bookingId);
+    let globalBookings = loadGlobalBookings();
+    const bookingIndex = globalBookings.findIndex(b => b.id === bookingId);
     if (bookingIndex === -1) return;
 
-    const booking = state.studentBookings[bookingIndex];
+    const booking = globalBookings[bookingIndex];
     const tutorIndex = state.tutors.findIndex(t => t.id === state.tutorId);
 
     if (tutorIndex === -1) return;
@@ -1582,17 +1684,17 @@ window.respondToRequest = function(bookingId, action) {
         state.tutors[tutorIndex].earnings += netEarnings;
         state.platformCommissions += platformCut;
 
-        state.studentBookings[bookingIndex].status = 'accepted';
+        globalBookings[bookingIndex].status = 'accepted';
 
         saveTutors();
         savePlatformCommissions();
-        saveStudentBookings();
+        saveGlobalBookings(globalBookings);
 
         showToast(`¡Solicitud Aceptada! Ganaste $${netEarnings.toFixed(2)} por esta tutoría (Comisión 10% cobrada).`, "success");
     } else {
         // Rechazar clase
-        state.studentBookings[bookingIndex].status = 'rejected';
-        saveStudentBookings();
+        globalBookings[bookingIndex].status = 'rejected';
+        saveGlobalBookings(globalBookings);
         showToast("Solicitud de tutoría rechazada.", "info");
     }
 
@@ -1708,11 +1810,8 @@ function renderAdminDashboard() {
     const disputesEmpty = document.getElementById('admin-disputes-empty');
     if (disputesTbody && disputesEmpty) {
         disputesTbody.innerHTML = '';
-        const storedBookings = localStorage.getItem('tutores_online_student_bookings');
-        if (storedBookings) {
-            state.studentBookings = JSON.parse(storedBookings);
-        }
-        const disputedBookings = state.studentBookings.filter(b => b.status === 'disputed');
+        const globalBookings = loadGlobalBookings();
+        const disputedBookings = globalBookings.filter(b => b.status === 'disputed');
         const tableEl = disputesTbody.closest('table');
         
         if (disputedBookings.length === 0) {
